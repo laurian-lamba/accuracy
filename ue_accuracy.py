@@ -66,7 +66,8 @@ class DualLogger:
         pass
 
 # Updated function to plot the ground truth, interpolated, and estimated position GPS points using matplotlib
-def plot_points_matplotlib(title, ground_truth, interpolated, estimated_position):
+def plot_points_matplotlib(title, ground_truth, interpolated, estimated_position, walk_trace=True):
+    ...
     # Extract latitudes and longitudes
     ground_truth_lon, ground_truth_lat = zip(*ground_truth)  # Swapped here
     interpolated_lon, interpolated_lat = zip(*interpolated)  # Swapped here
@@ -100,7 +101,9 @@ def plot_points_matplotlib(title, ground_truth, interpolated, estimated_position
     
     # Plot a line connecting the sorted estimated GPS points
     plt.plot(estimated_position_lat, estimated_position_lon, color='black', linestyle='-', linewidth=1)
-    plt.plot(ground_truth_lat, ground_truth_lon, color='blue', linestyle='-', linewidth=2)
+    if walk_trace:  # Only plot the ground truth line if walk_trace is True
+        plt.plot(ground_truth_lat, ground_truth_lon, color='blue', linestyle='-', linewidth=2)
+
 
     
     plt.xlabel('Longitude')  # Corrected label
@@ -268,14 +271,27 @@ def parse_arguments(args):
     plot_flag = args[args.index('--plot') + 1].lower() == 'true' if '--plot' in args else False
     kml_flag = args[args.index('--kml') + 1].lower() == 'true' if '--kml' in args else False
     cdf_flag = args[args.index('--cdf') + 1].lower() == 'true' if '--cdf' in args else False
-
-    return title, csv_path, log_path, plot_flag, kml_flag, cdf_flag
+    # Extract the walk_trace flag
+    walk_trace = args[args.index('--walk_trace') + 1].lower() == 'true' if '--walk_trace' in args else True
+    
+    return title, csv_path, log_path, plot_flag, kml_flag, cdf_flag, walk_trace
 
 
 def plot_timeseries(title, timestamps, errors):
     # Convert string timestamps to datetime objects
-    datetime_timestamps = [datetime.datetime.strptime(ts.split('.')[0] + '.' + ts.split('.')[1][:6] + 'Z', "%Y-%m-%dT%H:%M:%S.%fZ") for ts in timestamps]
-
+    datetime_timestamps = []
+    for ts in timestamps:
+        try:
+            # Check if the timestamp has the expected format with the 'Z' character
+            if ts.endswith('Z'):
+                dt = datetime.datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%fZ")
+            else:
+                dt = datetime.datetime.strptime(ts.split('.')[0], "%Y-%m-%dT%H:%M:%S")
+                dt += datetime.timedelta(microseconds=int(ts.split('.')[1][:6]))  # Add microseconds up to 2 decimal places
+            datetime_timestamps.append(dt)
+        except ValueError as e:
+            logging.error(f"Error parsing timestamp {ts}: {e}")
+            continue
 
     plt.figure(figsize=(10, 6))
     plt.plot(datetime_timestamps, errors, marker='o', linestyle='-', color='blue')
@@ -333,7 +349,7 @@ def calculate_and_plot_timestamp_metrics(title, datetime_timestamps, periodiciti
     
     # Print the metrics
     print(f"Test Start Time: {test_start_time}")
-    print(f"Times where periodicity is not 160ms ±20ms: {[datetime_timestamps[i] for i, _ in irregular_intervals]}")
+    #print(f"Times where periodicity is not 160ms ±20ms: {[datetime_timestamps[i] for i, _ in irregular_intervals]}")
     print(f"Test Duration: {test_duration}")
     print(f"End Timestamp: {end_timestamp}")
     print(f"Median Report Time: {median_report_time:.2f} ms")
@@ -356,20 +372,17 @@ def calculate_and_plot_timestamp_metrics(title, datetime_timestamps, periodiciti
 
 def main():
     # Parse command-line arguments
-    title, csv_path, log_path, plot_flag, kml_flag, cdf_flag = parse_arguments(sys.argv[1:])
-  
+    title, csv_path, log_path, plot_flag, kml_flag, cdf_flag, walk_trace = parse_arguments(sys.argv[1:])
+    
+    # Prompt user for log choice
+    log_choice = input("Which log would you like to parse? (1. client_response_log, 2. nlg_log): ")
+
     # Create a directory with the title's name
     if not os.path.exists(title):
         os.makedirs(title)
 
-    # Redirect stdout to both console and file
+    # Set up logging
     dual_logger = DualLogger(title)
-    sys.stdout = dual_logger
-
-    # Switch back to original stdout for user input
-    sys.stdout = dual_logger.get_original_stdout()
-    log_choice = input("Which log would you like to parse? (1. client_response_log, 2. nlg_log): ")
-    # Switch back to DualLogger
     sys.stdout = dual_logger
 
     if log_choice == "1":
@@ -429,9 +442,10 @@ def main():
     
 
 
+    calculate_and_plot_timestamp_metrics(title, datetime_timestamps, periodicities)
     # Plotting
     if plot_flag:
-        plot_points_matplotlib(title, ground_truth, interpolated, estimated_position)
+        plot_points_matplotlib(title, ground_truth, interpolated, estimated_position, walk_trace)
     if cdf_flag:
         plot_cdf(title, errors)
     if kml_flag:
@@ -439,7 +453,7 @@ def main():
     if plot_flag:
         plot_timeseries(title, timestamps, errors)
     plot_periodicity(title, periodicities)
-    calculate_and_plot_timestamp_metrics(title, datetime_timestamps, periodicities)
+    
 
 
 
